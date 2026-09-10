@@ -1,7 +1,6 @@
 import os
 
 from litellm import completion
-
 from settings import settings
 
 os.environ["OPENAI_API_KEY"] = settings.OPENAI_API_KEY
