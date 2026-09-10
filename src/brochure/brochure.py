@@ -116,7 +116,7 @@ use this information to build a short brochure of the company in markdown withou
 
 
 def create_brochure(company_name, url):
-    openai = OpenAI(api_key=settings.API_KEY)
+    openai = OpenAI(api_key=settings.OPENAI_API_KEY)
 
     messages=[
             {"role": "system", "content": brochure_system_prompt},

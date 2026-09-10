@@ -1,9 +1,10 @@
 import os
 
 from litellm import completion
+
 from settings import settings
 
-os.environ["OPENAI_API_KEY"] = settings.API_KEY
+os.environ["OPENAI_API_KEY"] = settings.OPENAI_API_KEY
 
 response = completion(
     model="openai/gpt-5.6-terra",

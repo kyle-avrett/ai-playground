@@ -4,7 +4,7 @@ from langchain.agents import create_agent
 
 from settings import settings
 
-os.environ["OPENAI_API_KEY"] = settings.API_KEY
+os.environ["OPENAI_API_KEY"] = settings.OPENAI_API_KEY
 
 def get_weather(city: str) -> str:
     """Get weather for a given city."""
