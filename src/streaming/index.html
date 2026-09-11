@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Quasar Live AI Stream Tester</title>
+
+        <!-- Google Fonts & Material Icons -->
+        <link href="https://fonts.googleapis.com/css2?family=Material+Icons" rel="stylesheet" type="text/css">
+
+        <!-- Quasar CSS -->
+        <link href="https://cdn.jsdelivr.net/npm/quasar@2/dist/quasar.prod.css" rel="stylesheet" type="text/css">
+    </head>
+    <body>
+
+        <!-- Quasar App Mount Point -->
+        <div id="q-app">
+            <q-layout view="lHh Lpr lFf" class="bg-grey-1">
+                <q-page-container>
+                    <q-page class="flex flex-column q-pa-lg justify-center items-center">
+
+                        <div style="width: 100%; max-width: 600px;">
+                            <h5 class="q-mt-none q-mb-md text-primary font-weight-bold">🤖 Quasar Stream Client</h5>
+
+                            <!-- Chat Display Panel -->
+                            <q-card class="chat-container q-mb-md q-pa-md text-body1" flat bordered>
+                                <div v-if="aiResponse" class="markdown-body">{{ aiResponse }}</div>
+                                <div v-else class="text-grey-6 text-italic">
+                                    {{ isLoading ? 'AI is thinking...' : 'Type a prompt below to see the live token stream.' }}
+                                </div>
+                            </q-card>
+
+                            <!-- Input Controls -->
+                            <div class="row q-gutter-sm items-center">
+                                <q-input
+                                    v-model="prompt"
+                                    outlined
+                                    dense
+                                    class="col bg-white"
+                                    placeholder="Type your prompt here..."
+                                    @keyup.enter="streamAIResponse"
+                                    :disable="isLoading"
+                                />
+                            </div>
+                        </div>
+
+                    </q-page>
+                </q-page-container>
+            </q-layout>
+        </div>
+
+        <!-- Vue 3 and Quasar JS CDNs -->
+        <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/quasar@2/dist/quasar.umd.prod.js"></script>
+
+        <script>
+         const { createApp, ref } = Vue;
+
+         const app = createApp({
+             setup() {
+                 const prompt = ref('');
+                 const aiResponse = ref('');
+                 const isLoading = ref(false);
+
+                 async function streamAIResponse() {
+                     if (!prompt.value.trim()) return;
+
+                     isLoading.value = true;
+                     aiResponse.value = ''; // Reset display text
+
+                     try {
+                         // Points directly to your local FastAPI Docker container
+                         const response = await fetch('http://localhost:8000/v1/chat/stream', {
+                             method: 'POST',
+                             headers: { 'Content-Type': 'application/json' },
+                             body: JSON.stringify({ prompt: prompt.value })
+                         });
+
+                         if (!response.ok) throw new Error('Failed to connect to FastAPI stream server.');
+
+                         const reader = response.body.getReader();
+                         const decoder = new TextDecoder('utf-8');
+                         let done = false;
+
+                         // Read the stream chunk-by-chunk
+                         while (!done) {
+                             const { value, done: readerDone } = await reader.read();
+                             done = readerDone;
+
+                             if (value) {
+                                 const chunk = decoder.decode(value, { stream: !done });
+                                 const lines = chunk.split('\n');
+
+                                 for (const line of lines) {
+                                     if (line.startsWith('data: ')) {
+                                         const dataStr = line.slice(6).trim();
+
+                                         if (dataStr === '[DONE]') break;
+
+                                         try {
+                                             const parsed = JSON.parse(dataStr);
+                                             const content = parsed.choices?.[0]?.delta?.content || '';
+                                             aiResponse.value += content; // Vue handles the reactive DOM update immediately
+                                         } catch (e) {
+                                             // Silently catch partial or incomplete chunk fragments
+                                         }
+                                     }
+                                 }
+                             }
+                         }
+                     } catch (error) {
+                         // Using Quasar's global Notify plugin
+                         Quasar.Notify.create({
+                             type: 'negative',
+                             message: error.message || 'An unexpected error occurred.'
+                         });
+                     } finally {
+                         isLoading.value = false;
+                         prompt.value = '';
+                     }
+                 }
+
+                 return {
+                     prompt,
+                     aiResponse,
+                     isLoading,
+                     streamAIResponse
+                 };
+             }
+         });
+
+         // Initialize the Quasar plugin engine and mount the app
+         app.use(Quasar);
+         app.mount('#q-app');
+        </script>
+
+        <!-- Minor styles for formatting and rendering text correctly -->
+        <style>
+         .chat-container {
+             min-height: 250px;
+             max-height: 50vh;
+             overflow-y: auto;
+             border-radius: 8px;
+         }
+         .markdown-body {
+             white-space: pre-wrap; /* Crucial: Preserves newlines and spaces emitted by the stream */
+             word-break: break-word;
+         }
+        </style>
+    </body>
+</html>
