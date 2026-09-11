@@ -4,10 +4,11 @@ from settings import settings
 
 os.environ["OPENAI_API_KEY"] = settings.OPENAI_API_KEY
 
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader
+import asyncio
+
+from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.llms.openai import OpenAI
-import asyncio
 
 # Create a RAG tool using LlamaIndex
 documents = SimpleDirectoryReader("data").load_data()
