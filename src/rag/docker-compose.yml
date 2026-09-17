@@ -1,0 +1,28 @@
+services:
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:latest
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      - ./litellm_config.yml:/app/config.yaml
+    env_file:
+      - .env
+    ports:
+      - "4000:4000"
+    depends_on:
+      litellm-database:
+        condition: service_healthy
+
+  litellm-database:
+    image: postgres:16
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

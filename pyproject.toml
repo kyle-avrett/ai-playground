@@ -9,16 +9,22 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "beautifulsoup4>=4.15.0",
+    "chromadb>=1.5.9",
     "deepagents>=0.7.13",
+    "gradio>=6.27.0",
     "ipython>=9.17.1",
     "langchain>=1.4.0",
     "langchain-openai>=1.6.2",
     "litellm>=1.83.0",
     "llama-index>=0.12.0",
     "openai>=2,<3",
+    "pandas>=3.0.5",
     "pydantic-ai>=2.31.1",
     "pydantic-settings>=2.15.0",
+    "python-dotenv>=1.2.3",
     "requests>=2.34.2",
+    "tenacity>=9.1.4",
+    "tqdm>=4.70.0",
 ]
 
 [dependency-groups]
