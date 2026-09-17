@@ -3,68 +3,54 @@ import math
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from answer import answer_question, fetch_context
 from llm import completion
 from pydantic import BaseModel, Field
 
-from answer import answer_question, fetch_context
-
-
-load_dotenv(override=True)
-
 MODEL = "gpt-4.1-nano"
-db_name = "vector_db"
-TEST_FILE = str(Path(__file__).parent / "tests.jsonl")
+TEST_FILE = Path(__file__).parent / "tests.jsonl"
 
 
 class TestQuestion(BaseModel):
-    """A test question with expected keywords and reference answer."""
-
     question: str = Field(description="The question to ask the RAG system")
-    keywords: list[str] = Field(description="Keywords that must appear in retrieved context")
+    keywords: list[str] = Field(
+        description="Keywords that must appear in retrieved context"
+    )
     reference_answer: str = Field(description="The reference answer for this question")
-    category: str = Field(description="Question category (e.g., direct_fact, spanning, temporal)")
-
-
-def load_tests() -> list[TestQuestion]:
-    """Load test questions from JSONL file."""
-    tests = []
-    with open(TEST_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            data = json.loads(line.strip())
-            tests.append(TestQuestion(**data))
-    return tests
+    category: str = Field(
+        description="Question category, such as direct_fact, spanning, or temporal"
+    )
 
 
 class RetrievalEval(BaseModel):
-    """Evaluation metrics for retrieval performance."""
-
-    mrr: float = Field(description="Mean Reciprocal Rank - average across all keywords")
-    ndcg: float = Field(description="Normalized Discounted Cumulative Gain (binary relevance)")
+    mrr: float = Field(description="Mean Reciprocal Rank, averaged across keywords")
+    ndcg: float = Field(description="Normalized Discounted Cumulative Gain")
     keywords_found: int = Field(description="Number of keywords found in top-k results")
     total_keywords: int = Field(description="Total number of keywords to find")
     keyword_coverage: float = Field(description="Percentage of keywords found")
 
 
 class AnswerEval(BaseModel):
-    """LLM-as-a-judge evaluation of answer quality."""
-
     feedback: str = Field(
-        description="Concise feedback on the answer quality, comparing it to the reference answer and evaluating based on the retrieved context"
+        description="Concise feedback comparing the generated answer to the reference answer and retrieved context"
     )
     accuracy: float = Field(
-        description="How factually correct is the answer compared to the reference answer? 1 (wrong. any wrong answer must score 1) to 5 (ideal - perfectly accurate). An acceptable answer would score 3."
+        description="Factual correctness versus the reference answer. 1 is wrong, 5 is perfect."
     )
     completeness: float = Field(
-        description="How complete is the answer in addressing all aspects of the question? 1 (very poor - missing key information) to 5 (ideal - all the information from the reference answer is provided completely). Only answer 5 if ALL information from the reference answer is included."
+        description="Coverage of all facts from the reference answer. 1 is very poor, 5 is complete."
     )
     relevance: float = Field(
-        description="How relevant is the answer to the specific question asked? 1 (very poor - off-topic) to 5 (ideal - directly addresses question and gives no additional information). Only answer 5 if the answer is completely relevant to the question and gives no additional information."
+        description="How directly the answer addresses the question with no extra information. 1 is off-topic, 5 is exact."
     )
+
+
+def load_tests() -> list[TestQuestion]:
+    with TEST_FILE.open(encoding="utf-8") as file:
+        return [TestQuestion(**json.loads(line)) for line in file]
 
 
 def calculate_mrr(keyword: str, retrieved_docs: list) -> float:
-    """Calculate reciprocal rank for a single keyword (case-insensitive)."""
     keyword_lower = keyword.lower()
     for rank, doc in enumerate(retrieved_docs, start=1):
         if keyword_lower in doc.page_content.lower():
@@ -73,86 +59,51 @@ def calculate_mrr(keyword: str, retrieved_docs: list) -> float:
 
 
 def calculate_dcg(relevances: list[int], k: int) -> float:
-    """Calculate Discounted Cumulative Gain."""
-    dcg = 0.0
-    for i in range(min(k, len(relevances))):
-        dcg += relevances[i] / math.log2(i + 2)  # i+2 because rank starts at 1
-    return dcg
+    return sum(
+        relevance / math.log2(rank + 1)
+        for rank, relevance in enumerate(relevances[:k], start=1)
+    )
 
 
 def calculate_ndcg(keyword: str, retrieved_docs: list, k: int = 10) -> float:
-    """Calculate nDCG for a single keyword (binary relevance, case-insensitive)."""
     keyword_lower = keyword.lower()
-
-    # Binary relevance: 1 if keyword found, 0 otherwise
     relevances = [
-        1 if keyword_lower in doc.page_content.lower() else 0 for doc in retrieved_docs[:k]
+        1 if keyword_lower in doc.page_content.lower() else 0
+        for doc in retrieved_docs[:k]
     ]
-
-    # DCG
-    dcg = calculate_dcg(relevances, k)
-
-    # Ideal DCG (best case: keyword in first position)
     ideal_relevances = sorted(relevances, reverse=True)
-    idcg = calculate_dcg(ideal_relevances, k)
-
-    return dcg / idcg if idcg > 0 else 0.0
+    ideal_dcg = calculate_dcg(ideal_relevances, k)
+    if ideal_dcg == 0:
+        return 0.0
+    return calculate_dcg(relevances, k) / ideal_dcg
 
 
 def evaluate_retrieval(test: TestQuestion, k: int = 10) -> RetrievalEval:
-    """
-    Evaluate retrieval performance for a test question.
-
-    Args:
-        test: TestQuestion object containing question and keywords
-        k: Number of top documents to retrieve (default 10)
-
-    Returns:
-        RetrievalEval object with MRR, nDCG, and keyword coverage metrics
-    """
-    # Retrieve documents using shared answer module
     retrieved_docs = fetch_context(test.question)
-
-    # Calculate MRR (average across all keywords)
     mrr_scores = [calculate_mrr(keyword, retrieved_docs) for keyword in test.keywords]
-    avg_mrr = sum(mrr_scores) / len(mrr_scores) if mrr_scores else 0.0
-
-    # Calculate nDCG (average across all keywords)
-    ndcg_scores = [calculate_ndcg(keyword, retrieved_docs, k) for keyword in test.keywords]
-    avg_ndcg = sum(ndcg_scores) / len(ndcg_scores) if ndcg_scores else 0.0
-
-    # Calculate keyword coverage
-    keywords_found = sum(1 for score in mrr_scores if score > 0)
+    ndcg_scores = [
+        calculate_ndcg(keyword, retrieved_docs, k) for keyword in test.keywords
+    ]
+    keywords_found = sum(score > 0 for score in mrr_scores)
     total_keywords = len(test.keywords)
-    keyword_coverage = (keywords_found / total_keywords * 100) if total_keywords > 0 else 0.0
 
     return RetrievalEval(
-        mrr=avg_mrr,
-        ndcg=avg_ndcg,
+        mrr=sum(mrr_scores) / total_keywords if total_keywords else 0.0,
+        ndcg=sum(ndcg_scores) / total_keywords if total_keywords else 0.0,
         keywords_found=keywords_found,
         total_keywords=total_keywords,
-        keyword_coverage=keyword_coverage,
+        keyword_coverage=(keywords_found / total_keywords * 100)
+        if total_keywords
+        else 0.0,
     )
 
 
 def evaluate_answer(test: TestQuestion) -> tuple[AnswerEval, str, list]:
-    """
-    Evaluate answer quality using LLM-as-a-judge (async).
-
-    Args:
-        test: TestQuestion object containing question and reference answer
-
-    Returns:
-        Tuple of (AnswerEval object, generated_answer string, retrieved_docs list)
-    """
-    # Get RAG response using shared answer module
     generated_answer, retrieved_docs = answer_question(test.question)
-
-    # LLM judge prompt
     judge_messages = [
         {
             "role": "system",
-            "content": "You are an expert evaluator assessing the quality of answers. Evaluate the generated answer by comparing it to the reference answer. Only give 5/5 scores for perfect answers.",
+            "content": "You are an expert evaluator assessing answer quality. Compare the generated answer to the reference answer. Only give 5/5 scores for perfect answers.",
         },
         {
             "role": "user",
@@ -173,48 +124,37 @@ Please evaluate the generated answer on three dimensions:
 Provide detailed feedback and scores from 1 (very poor) to 5 (ideal) for each dimension. If the answer is wrong, then the accuracy score must be 1.""",
         },
     ]
-
-    # Call LLM judge with structured outputs (async)
-    judge_response = completion(model=MODEL, messages=judge_messages, response_format=AnswerEval)
-
-    answer_eval = AnswerEval.model_validate_json(judge_response.choices[0].message.content)
-
+    judge_response = completion(
+        model=MODEL, messages=judge_messages, response_format=AnswerEval
+    )
+    answer_eval = AnswerEval.model_validate_json(
+        judge_response.choices[0].message.content
+    )
     return answer_eval, generated_answer, retrieved_docs
 
 
 def evaluate_all_retrieval():
-    """Evaluate all retrieval tests."""
     tests = load_tests()
     total_tests = len(tests)
     for index, test in enumerate(tests):
-        result = evaluate_retrieval(test)
-        progress = (index + 1) / total_tests
-        yield test, result, progress
+        yield test, evaluate_retrieval(test), (index + 1) / total_tests
 
 
 def evaluate_all_answers():
-    """Evaluate all answers to tests using batched async execution."""
     tests = load_tests()
     total_tests = len(tests)
     for index, test in enumerate(tests):
-        result = evaluate_answer(test)[0]
-        progress = (index + 1) / total_tests
-        yield test, result, progress
+        answer_eval, _generated_answer, _retrieved_docs = evaluate_answer(test)
+        yield test, answer_eval, (index + 1) / total_tests
 
 
 def run_cli_evaluation(test_number: int):
-    """Run evaluation for a specific test (async helper for CLI)."""
-    # Load tests
     tests = load_tests()
-
     if test_number < 0 or test_number >= len(tests):
         print(f"Error: test_row_number must be between 0 and {len(tests) - 1}")
         sys.exit(1)
 
-    # Get the test
     test = tests[test_number]
-
-    # Print test info
     print(f"\n{'=' * 80}")
     print(f"Test #{test_number}")
     print(f"{'=' * 80}")
@@ -223,25 +163,21 @@ def run_cli_evaluation(test_number: int):
     print(f"Category: {test.category}")
     print(f"Reference Answer: {test.reference_answer}")
 
-    # Retrieval Evaluation
     print(f"\n{'=' * 80}")
     print("Retrieval Evaluation")
     print(f"{'=' * 80}")
-
     retrieval_result = evaluate_retrieval(test)
-
     print(f"MRR: {retrieval_result.mrr:.4f}")
     print(f"nDCG: {retrieval_result.ndcg:.4f}")
-    print(f"Keywords Found: {retrieval_result.keywords_found}/{retrieval_result.total_keywords}")
+    print(
+        f"Keywords Found: {retrieval_result.keywords_found}/{retrieval_result.total_keywords}"
+    )
     print(f"Keyword Coverage: {retrieval_result.keyword_coverage:.1f}%")
 
-    # Answer Evaluation
     print(f"\n{'=' * 80}")
     print("Answer Evaluation")
     print(f"{'=' * 80}")
-
-    answer_result, generated_answer, retrieved_docs = evaluate_answer(test)
-
+    answer_result, generated_answer, _retrieved_docs = evaluate_answer(test)
     print(f"\nGenerated Answer:\n{generated_answer}")
     print(f"\nFeedback:\n{answer_result.feedback}")
     print("\nScores:")
@@ -252,7 +188,6 @@ def run_cli_evaluation(test_number: int):
 
 
 def main():
-    """CLI to evaluate a specific test by row number."""
     if len(sys.argv) != 2:
         print("Usage: uv run eval.py <test_row_number>")
         sys.exit(1)

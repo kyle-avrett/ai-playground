@@ -1,17 +1,16 @@
 import gradio as gr
-from dotenv import load_dotenv
-
 from answer import answer_question
-
-load_dotenv(override=True)
 
 
 def format_context(context):
-    result = "<h2 style='color: #ff7800;'>Relevant Context</h2>\n\n"
+    sections = ["<h2 style='color: #ff7800;'>Relevant Context</h2>"]
     for doc in context:
-        result += f"<span style='color: #ff7800;'>Source: {doc.metadata['source']}</span>\n\n"
-        result += doc.page_content + "\n\n"
-    return result
+        sections.append(
+            f"<span style='color: #ff7800;'>Source: {doc.metadata['source']}</span>\n\n"
+            f"{doc.page_content}"
+        )
+    return "\n\n".join(sections)
+
 
 def text_content(message):
     content = message["content"]
@@ -26,14 +25,15 @@ def text_content(message):
 
 
 def text_history(history):
-    return [{"role": message["role"], "content": text_content(message)} for message in history]
-
+    return [
+        {"role": message["role"], "content": text_content(message)}
+        for message in history
+    ]
 
 
 def chat(history):
     last_message = text_content(history[-1])
-    prior = text_history(history[:-1])
-    answer, context = answer_question(last_message, prior)
+    answer, context = answer_question(last_message, text_history(history[:-1]))
     history.append({"role": "assistant", "content": answer})
     return history, format_context(context)
 
@@ -67,7 +67,9 @@ def main():
                 )
 
         message.submit(
-            put_message_in_chatbot, inputs=[message, chatbot], outputs=[message, chatbot]
+            put_message_in_chatbot,
+            inputs=[message, chatbot],
+            outputs=[message, chatbot],
         ).then(chat, inputs=chatbot, outputs=[chatbot, context_markdown])
 
     ui.launch(inbrowser=True, theme=theme)

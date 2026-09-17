@@ -2,10 +2,9 @@ services:
   litellm:
     image: docker.litellm.ai/berriai/litellm:latest
     command: ["--config", "/app/config.yaml", "--port", "4000"]
+    env_file: .env
     volumes:
-      - ./litellm_config.yml:/app/config.yaml
-    env_file:
-      - .env
+      - ./litellm_config.yml:/app/config.yaml:ro
     ports:
       - "4000:4000"
     depends_on:
@@ -14,10 +13,9 @@ services:
 
   litellm-database:
     image: postgres:16
-    env_file:
-      - .env
+    env_file: .env
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10

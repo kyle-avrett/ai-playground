@@ -2,7 +2,7 @@ import os
 
 from dotenv import load_dotenv
 from openai import OpenAI
-
+from pydantic import BaseModel
 
 load_dotenv(override=True)
 
@@ -12,7 +12,7 @@ client = OpenAI(
 )
 
 
-def completion(model, messages, response_format=None):
+def completion(model, messages, response_format: type[BaseModel] | None = None):
     kwargs = {}
     if response_format is not None:
         kwargs["response_format"] = {

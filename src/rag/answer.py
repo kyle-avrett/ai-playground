@@ -1,26 +1,16 @@
-from dotenv import load_dotenv
+from pathlib import Path
+
 from chromadb import PersistentClient
 from llm import completion, embeddings
 from pydantic import BaseModel, Field
-from pathlib import Path
 from tenacity import retry, wait_exponential
 
-
-load_dotenv(override=True)
-
+BASE_DIR = Path(__file__).parent
+DB_PATH = str(BASE_DIR / "database")
+COLLECTION_NAME = "docs"
+EMBEDDING_MODEL = "text-embedding-3-large"
 MODEL = "openai/gpt-4.1-nano"
-DB_NAME = str(Path(__file__).parent / "database")
-KNOWLEDGE_BASE_PATH = Path(__file__).parent / "knowledge"
-SUMMARIES_PATH = Path(__file__).parent / "summaries"
-
-collection_name = "docs"
-embedding_model = "text-embedding-3-large"
-wait = wait_exponential(multiplier=1, min=10, max=240)
-
-
-chroma = PersistentClient(path=DB_NAME)
-collection = chroma.get_or_create_collection(collection_name)
-
+RETRY_WAIT = wait_exponential(multiplier=1, min=10, max=240)
 RETRIEVAL_K = 20
 FINAL_K = 10
 
@@ -35,6 +25,9 @@ For context, here are specific extracts from the Knowledge Base that might be di
 With this context, please answer the user's question. Be accurate, relevant and complete.
 """
 
+chroma = PersistentClient(path=DB_PATH)
+collection = chroma.get_or_create_collection(COLLECTION_NAME)
+
 
 class Result(BaseModel):
     page_content: str
@@ -43,11 +36,11 @@ class Result(BaseModel):
 
 class RankOrder(BaseModel):
     order: list[int] = Field(
-        description="The order of relevance of chunks, from most relevant to least relevant, by chunk id number"
+        description="The chunk ids ordered from most relevant to least relevant."
     )
 
 
-@retry(wait=wait)
+@retry(wait=RETRY_WAIT)
 def rerank(question, chunks):
     system_prompt = """
 You are a document re-ranker.
@@ -56,38 +49,48 @@ The chunks are provided in the order they were retrieved; this should be approxi
 You must rank order the provided chunks by relevance to the question, with the most relevant chunk first.
 Reply only with the list of ranked chunk ids, nothing else. Include all the chunk ids you are provided with, reranked.
 """
-    user_prompt = f"The user has asked the following question:\n\n{question}\n\nOrder all the chunks of text by relevance to the question, from most relevant to least relevant. Include all the chunk ids you are provided with, reranked.\n\n"
-    user_prompt += "Here are the chunks:\n\n"
-    for index, chunk in enumerate(chunks):
-        user_prompt += f"# CHUNK ID: {index + 1}:\n\n{chunk.page_content}\n\n"
-    user_prompt += "Reply only with the list of ranked chunk ids, nothing else."
+    chunk_text = "\n\n".join(
+        f"# CHUNK ID: {index}:\n\n{chunk.page_content}"
+        for index, chunk in enumerate(chunks, start=1)
+    )
+    user_prompt = f"""
+The user has asked the following question:
+
+{question}
+
+Order all the chunks of text by relevance to the question, from most relevant to least relevant. Include all the chunk ids you are provided with, reranked.
+
+Here are the chunks:
+
+{chunk_text}
+
+Reply only with the list of ranked chunk ids, nothing else.
+"""
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
     response = completion(model=MODEL, messages=messages, response_format=RankOrder)
-    reply = response.choices[0].message.content
-    order = RankOrder.model_validate_json(reply).order
-    return [chunks[i - 1] for i in order]
+    order = RankOrder.model_validate_json(response.choices[0].message.content).order
+    return [chunks[index - 1] for index in order]
 
 
 def make_rag_messages(question, history, chunks):
     context = "\n\n".join(
-        f"Extract from {chunk.metadata['source']}:\n{chunk.page_content}" for chunk in chunks
+        f"Extract from {chunk.metadata['source']}:\n{chunk.page_content}"
+        for chunk in chunks
     )
-    system_prompt = SYSTEM_PROMPT.format(context=context)
-    return (
-        [{"role": "system", "content": system_prompt}]
-        + history
-        + [{"role": "user", "content": question}]
-    )
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT.format(context=context)},
+        *history,
+        {"role": "user", "content": question},
+    ]
 
 
-@retry(wait=wait)
+@retry(wait=RETRY_WAIT)
 def rewrite_query(question, history=None):
-    """Rewrite the user's question to be a more specific question that is more likely to surface relevant content in the Knowledge Base."""
-    if history is None:
-        history = []
+    """Use chat history to turn a contextual follow-up into a searchable query."""
+    history = history or []
 
     message = f"""
 You are in a conversation with a user.
@@ -110,43 +113,47 @@ user: What role covers? -> Query: What role FooBar covers?
 
 IMPORTANT: Respond ONLY with the precise knowledgebase query, nothing else.
 """
-    response = completion(model=MODEL, messages=[{"role": "system", "content": message}])
+    response = completion(
+        model=MODEL, messages=[{"role": "system", "content": message}]
+    )
     return response.choices[0].message.content
 
 
-def merge_chunks(chunks, reranked):
-    merged = chunks[:]
-    existing = [chunk.page_content for chunk in chunks]
-    for chunk in reranked:
-        if chunk.page_content not in existing:
+def merge_chunks(*chunk_groups):
+    merged = []
+    seen = set()
+    for chunks in chunk_groups:
+        for chunk in chunks:
+            if chunk.page_content in seen:
+                continue
+            seen.add(chunk.page_content)
             merged.append(chunk)
     return merged
 
 
 def fetch_context_unranked(question):
-    query = embeddings(model=embedding_model, input=[question]).data[0].embedding
+    query = embeddings(model=EMBEDDING_MODEL, input=[question]).data[0].embedding
     results = collection.query(query_embeddings=[query], n_results=RETRIEVAL_K)
-    chunks = []
-    for result in zip(results["documents"][0], results["metadatas"][0]):
-        chunks.append(Result(page_content=result[0], metadata=result[1]))
-    return chunks
+    return [
+        Result(page_content=document, metadata=metadata)
+        for document, metadata in zip(results["documents"][0], results["metadatas"][0])
+    ]
 
 
 def fetch_context(original_question, history=None):
     rewritten_question = rewrite_query(original_question, history)
-    print(rewritten_question)
-    chunks1 = fetch_context_unranked(original_question)
-    chunks2 = fetch_context_unranked(rewritten_question)
-    chunks = merge_chunks(chunks1, chunks2)
-    reranked = rerank(original_question, chunks)
-    return reranked[:FINAL_K]
+    chunks = merge_chunks(
+        fetch_context_unranked(original_question),
+        fetch_context_unranked(rewritten_question),
+    )
+    return rerank(original_question, chunks)[:FINAL_K]
 
 
-@retry(wait=wait)
-def answer_question(question: str, history: list[dict] = []) -> tuple[str, list]:
-    """
-    Answer a question using RAG and return the answer and the retrieved context
-    """
+@retry(wait=RETRY_WAIT)
+def answer_question(
+    question: str, history: list[dict] | None = None
+) -> tuple[str, list[Result]]:
+    history = history or []
     chunks = fetch_context(question, history)
     messages = make_rag_messages(question, history, chunks)
     response = completion(model=MODEL, messages=messages)

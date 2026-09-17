@@ -2,12 +2,16 @@
 
 ## Quickstart
 
-``` shell
+```shell
 cp .env.example .env
-docker compose up
+# Set OPENAI_API_KEY in .env.
+
+docker compose up -d
+# Open http://127.0.0.1:4000/ui/
+# Create and set VIRTUAL_KEY in .env.
+# Turn on Request Logging if you want it.
 
 uv run ingest.py
-
 uv run frontend_eval.py
 uv run frontend_chat.py
 ```
