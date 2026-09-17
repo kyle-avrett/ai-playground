@@ -16,6 +16,31 @@ uv run frontend_eval.py
 uv run frontend_chat.py
 ```
 
+## MCP server
+
+Run the plain-text knowledge scan server over HTTP:
+
+```shell
+uv run knowledge_mcp.py
+```
+
+The MCP endpoint is `http://127.0.0.1:8000/mcp`.
+
+Add it to an AI agent as a remote HTTP MCP server:
+
+```json
+{
+  "mcpServers": {
+    "rag-knowledge": {
+      "url": "http://127.0.0.1:8000/mcp"
+    }
+  }
+}
+```
+
+The server exposes one tool: `scan_knowledge`. It scans `knowledge/**/*.md` with plain text matching and returns `source`, `line`, `offset`, and `snippet`.
+
+
 ## Layout
 
 ```text
@@ -28,6 +53,7 @@ src/rag/
 ├── eval.py              # shared evaluation core and CLI for one tests.jsonl row
 ├── frontend_chat.py     # Gradio chat UI with retrieved-context pane
 ├── frontend_eval.py     # Gradio evaluation dashboard with metrics and category charts
+├── knowledge_mcp.py     # FastMCP stdio server for plain-text knowledge scans
 ├── tests.jsonl          # eval questions, keywords, categories, reference answers
 ├── database/            # generated ChromaDB index, collection "docs"
 └── knowledge/           # source markdown docs
