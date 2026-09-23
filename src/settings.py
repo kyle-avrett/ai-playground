@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     LANGFUSE_TRACING_ENVIRONMENT: str = "development"
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
+    MLFLOW_TRACKING_URI: str = ""
 
 
 settings = Settings()
