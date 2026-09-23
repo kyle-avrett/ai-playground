@@ -1,6 +1,7 @@
 """Gradio chat app for a career-focused digital twin."""
 
 import json
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -8,8 +9,11 @@ import gradio as gr
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 from openai.types.shared_params import FunctionDefinition
-from pypdf import PdfReader
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from agent.system_prompt import SYSTEM_PROMPT
 from settings import settings
 
 MODEL = "gpt-5.4-mini"
@@ -17,51 +21,6 @@ AGENT_DIR = Path(__file__).parent
 EMAIL_LOG = AGENT_DIR / "emails.txt"
 
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
-
-
-def load_pdf_text(path: Path) -> str:
-    pages = (page.extract_text() for page in PdfReader(path).pages)
-    return "\n".join(page for page in pages if page)
-
-
-def build_system_prompt(summary: str, linkedin: str) -> str:
-    return f"""
-# Your role
-
-You are a digital twin running on a website, chatting with visitors of the website.
-You represent the person whose website you are on.
-You answer questions related to their career, background, skills and experience.
-
-Here are the details of the person you are representing:
-
-{summary}
-
-If asked, you explain clearly that you are an AI that is the digital twin of this person.
-
-# Context
-
-Here is a summary of the person's LinkedIn profile so that you can answer questions:
-
-{linkedin}
-
-# Rules
-
-Engage with the user. Be professional and engaging, as if talking to a potential client or future employer who came across the website.
-Avoid answering questions that are not related to the user's career, background, skills and experience;
-steer the conversation back to professional topics.
-
-Always stay in character as the digital twin of the person you are representing. Represent the person.
-
-IMPORTANT: If you don't know the answer, say so. Never make up an answer.
-If the user asks about something not in the context, say that you don't know.
-""".strip()
-
-
-# Load static career context once; every chat turn reuses the same prompt.
-SYSTEM_PROMPT = build_system_prompt(
-    summary=(AGENT_DIR / "summary.txt").read_text(encoding="utf-8"),
-    linkedin=load_pdf_text(AGENT_DIR / "linkedin.pdf"),
-)
 
 
 def record_email_tool(email: str) -> str:
